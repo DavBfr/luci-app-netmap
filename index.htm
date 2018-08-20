@@ -1,0 +1,163 @@
+<%
+	local fs = require "nixio.fs"
+	local util = require "luci.util"
+	local stat = require "luci.tools.status"
+	local ver = require "luci.version"
+
+	local has_ipv6 = fs.access("/proc/net/ipv6_route")
+	local has_dhcp = fs.access("/etc/config/dhcp")
+	local has_wifi = ((fs.stat("/etc/config/wireless", "size") or 0) > 0)
+
+	local has_dsl = fs.access("/etc/init.d/dsl_control")
+
+	local ntm = require "luci.model.network".init()
+	local wan = ntm:get_wannet();
+	local leases     = stat.dhcp_leases();
+	local wifinets   = stat.wifi_networks();
+	local hosts_hints = luci.sys.net.host_hints();
+	local hosts = {}
+	
+	local m, host;
+	for m, host in pairs(hosts_hints) do
+		local name, con = false
+		local hide = false
+		if host.name and host.ipv4 then
+			name = host.name .. '\\n' .. host.ipv4
+			con = true
+		elseif host.name then
+			name = host.name
+		elseif host.ipv4 then
+			name = host.ipv4
+			con = true
+		elseif host.ipv6 then
+			name = ''
+			con = true
+			hide = true
+		end
+		hosts[m] = {name = name, id = false, con = con, hide = hide}
+	end
+	
+	local net
+	local ifaces = { }
+	local netlist = { }
+	for _, net in ipairs(ntm:get_networks()) do
+		if net:name() ~= "loopback" then
+			local device = net:get_interface()
+			local mac = device:mac()
+			if hosts[mac] ~= nil then
+				hosts[mac].hide = true
+				hosts[mac].con = device:is_up()
+			end
+		end
+	end
+
+-%>
+
+<%+header%>
+
+<style type="text/css">
+    #map {
+      width: 100%;
+      height: 600px;
+      border: 1px solid lightgray;
+    }
+</style>
+	
+<h2 name="content"><%:Network MAP%></h2>
+
+		<div id="map"><%:Collecting data...%></div>
+		
+		<script type="text/javascript" src="//cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.js"></script>
+		<script type="text/javascript">
+    var nodes = null;
+    var edges = null;
+    var network = null;
+
+    var DIR = '../img/refresh-cl/';
+    var EDGE_LENGTH_MAIN = 200;
+    var EDGE_LENGTH_SUB = 50;
+
+    // Called when the Visualization API is loaded.
+    function draw() {
+      // Create a data table with nodes.
+      nodes = [];
+
+      // Create a data table with links.
+      edges = [];
+			
+			var router_img = "data:image/svg+xml;utf8;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iaXNvLTg4NTktMSI/Pgo8IS0tIEdlbmVyYXRvcjogQWRvYmUgSWxsdXN0cmF0b3IgMTguMS4xLCBTVkcgRXhwb3J0IFBsdWctSW4gLiBTVkcgVmVyc2lvbjogNi4wMCBCdWlsZCAwKSAgLS0+CjxzdmcgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4bWxuczp4bGluaz0iaHR0cDovL3d3dy53My5vcmcvMTk5OS94bGluayIgdmVyc2lvbj0iMS4xIiBpZD0iQ2FwYV8xIiB4PSIwcHgiIHk9IjBweCIgdmlld0JveD0iMCAwIDE2LjU4IDE2LjU4IiBzdHlsZT0iZW5hYmxlLWJhY2tncm91bmQ6bmV3IDAgMCAxNi41OCAxNi41ODsiIHhtbDpzcGFjZT0icHJlc2VydmUiIHdpZHRoPSIyNHB4IiBoZWlnaHQ9IjI0cHgiPgo8Zz4KCTxnPgoJCTxwYXRoIGQ9Ik04LjI5LDBDMy43MTksMCwwLDMuNzE4LDAsOC4yOXMzLjcxOCw4LjI5LDguMjksOC4yOXM4LjI5LTMuNzE5LDguMjktOC4yOVMxMi44NjEsMCw4LjI5LDB6ICAgICBNOC4yOSwxNS44MDhjLTQuMTQ2LDAtNy41MTktMy4zNzMtNy41MTktNy41MTlTNC4xNDQsMC43Nyw4LjI5LDAuNzdzNy41MTksMy4zNzMsNy41MTksNy41MTkgICAgQzE1LjgwOSwxMi40MzUsMTIuNDM2LDE1LjgwOCw4LjI5LDE1LjgwOHoiIGZpbGw9IiMwMDAwMDAiLz4KCQk8cGF0aCBkPSJNMTUuMTQ1LDcuMjU4Yy0wLjU0NiwwLTEuOTcxLDAtMi43MDMsMGMtMC4yMzgsMC0wLjM5MywwLTAuMzkzLDBzMC0wLjU2OSwwLTAuOTI3ICAgIGMwLTAuMzU3LTAuMjY4LTAuMDg4LTAuMjY4LTAuMDg4UzkuNzY5LDcuNzU5LDkuNTU4LDcuOTdjLTAuMTU0LDAuMTUzLDAuMDE3LDAuMywwLjAxNywwLjNsMi4xNTMsMS43ODEgICAgYzAsMCwwLjI1NywwLjI3MSwwLjI1Ny0wLjAyMmMwLTAuMjk0LDAtMS4wMDQsMC0xLjAwNHMwLjE3MywwLDAuNDM4LDBjMC43NTcsMCwyLjEzNSwwLDIuNjk2LDBjMCwwLDAuMTUyLDAuMDM5LDAuMTUyLTAuMTkxICAgIGMwLTAuMjMyLDAtMS4yNDgsMC0xLjQxM0MxNS4yNzIsNy4yNTQsMTUuMTQ1LDcuMjU4LDE1LjE0NSw3LjI1OHoiIGZpbGw9IiMwMDAwMDAiLz4KCQk8cGF0aCBkPSJNNy4wNjYsNy45N0M2Ljg1NSw3Ljc1OSw0Ljg0Miw2LjI0Myw0Ljg0Miw2LjI0M1M0LjU3NSw1Ljk3NCw0LjU3NSw2LjMzMXMwLDAuOTI3LDAsMC45MjcgICAgcy0wLjE1NSwwLTAuMzkzLDBjLTAuNzMyLDAtMi4xNTgsMC0yLjcwMywwYzAsMC0wLjEyNy0wLjAwNC0wLjEyNywwLjE2MmMwLDAuMTY1LDAsMS4xODEsMCwxLjQxM2MwLDAuMjMsMC4xNTIsMC4xOTEsMC4xNTIsMC4xOTEgICAgYzAuNTYxLDAsMS45MzksMCwyLjY5NiwwYzAuMjY1LDAsMC40MzgsMCwwLjQzOCwwczAsMC43MSwwLDEuMDA0YzAsMC4yOTMsMC4yNTYsMC4wMjIsMC4yNTYsMC4wMjJsMi4xNTMtMS43ODEgICAgQzcuMDQ5LDguMjcsNy4yMjEsOC4xMjMsNy4wNjYsNy45N3oiIGZpbGw9IiMwMDAwMDAiLz4KCQk8cGF0aCBkPSJNOC41LDkuNTA1QzguMzQ4LDkuMzUyLDguMjAxLDkuNTIzLDguMjAxLDkuNTIzTDYuNDIsMTEuNjc2YzAsMC0wLjI3MSwwLjI1NiwwLjAyMiwwLjI1NiAgICBjMC4yOTQsMCwxLjAwNCwwLDEuMDA0LDBzMCwwLjE3MywwLDAuNDM4YzAsMC43NTcsMCwyLjEzNiwwLDIuNjk2YzAsMC0wLjA0LDAuMTUyLDAuMTkxLDAuMTUyYzAuMjMyLDAsMS4yNDgsMCwxLjQxMywwICAgIGMwLjE2NiwwLDAuMTYyLTAuMTI3LDAuMTYyLTAuMTI3YzAtMC41NDUsMC0xLjk3MSwwLTIuNzAyYzAtMC4yMzgsMC0wLjM5NCwwLTAuMzk0czAuNTY5LDAsMC45MjcsMCAgICBjMC4zNTYsMCwwLjA4OC0wLjI2NywwLjA4OC0wLjI2N1M4LjcxMSw5LjcxNiw4LjUsOS41MDV6IiBmaWxsPSIjMDAwMDAwIi8+CgkJPHBhdGggZD0iTTYuNDIsNC44OTNsMS43ODEsMi4xNTNjMCwwLDAuMTQ2LDAuMTcyLDAuMjk5LDAuMDE4YzAuMjExLTAuMjExLDEuNzI4LTIuMjIzLDEuNzI4LTIuMjIzICAgIHMwLjI2OS0wLjI2Ny0wLjA4OC0wLjI2N3MtMC45MjcsMC0wLjkyNywwczAtMC4xNTUsMC0wLjM5M2MwLTAuNzMyLDAtMi4xNTcsMC0yLjcwM2MwLDAsMC4wMDQtMC4xMjctMC4xNjItMC4xMjcgICAgYy0wLjE2NSwwLTEuMTgxLDAtMS40MTMsMGMtMC4yMzEsMC0wLjE5MSwwLjE1Mi0wLjE5MSwwLjE1MmMwLDAuNTYxLDAsMS45MzksMCwyLjY5NmMwLDAuMjY1LDAsMC40MzgsMCwwLjQzOHMtMC43MSwwLTEuMDA0LDAgICAgQzYuMTQ5LDQuNjM3LDYuNDIsNC44OTMsNi40Miw0Ljg5M3oiIGZpbGw9IiMwMDAwMDAiLz4KCTwvZz4KPC9nPgo8Zz4KPC9nPgo8Zz4KPC9nPgo8Zz4KPC9nPgo8Zz4KPC9nPgo8Zz4KPC9nPgo8Zz4KPC9nPgo8Zz4KPC9nPgo8Zz4KPC9nPgo8Zz4KPC9nPgo8Zz4KPC9nPgo8Zz4KPC9nPgo8Zz4KPC9nPgo8Zz4KPC9nPgo8Zz4KPC9nPgo8Zz4KPC9nPgo8L3N2Zz4K";
+			
+			var wifi_img = "data:image/svg+xml;utf8;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iaXNvLTg4NTktMSI/Pgo8IS0tIEdlbmVyYXRvcjogQWRvYmUgSWxsdXN0cmF0b3IgMTkuMC4wLCBTVkcgRXhwb3J0IFBsdWctSW4gLiBTVkcgVmVyc2lvbjogNi4wMCBCdWlsZCAwKSAgLS0+CjxzdmcgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4bWxuczp4bGluaz0iaHR0cDovL3d3dy53My5vcmcvMTk5OS94bGluayIgdmVyc2lvbj0iMS4xIiBpZD0iQ2FwYV8xIiB4PSIwcHgiIHk9IjBweCIgdmlld0JveD0iMCAwIDU5IDU5IiBzdHlsZT0iZW5hYmxlLWJhY2tncm91bmQ6bmV3IDAgMCA1OSA1OTsiIHhtbDpzcGFjZT0icHJlc2VydmUiIHdpZHRoPSI1MTJweCIgaGVpZ2h0PSI1MTJweCI+CjxnPgoJPHBhdGggZD0iTTEwLjQwNywxLjcwN2MwLjM5MS0wLjM5MSwwLjM5MS0xLjAyMywwLTEuNDE0cy0xLjAyMy0wLjM5MS0xLjQxNCwwYy0xMS4zMDcsMTEuMzA3LTExLjMwNywyOS43MDUsMCw0MS4wMTIgICBDOS4xODksNDEuNSw5LjQ0NSw0MS41OTgsOS43LDQxLjU5OHMwLjUxMi0wLjA5OCwwLjcwNy0wLjI5M2MwLjM5MS0wLjM5MSwwLjM5MS0xLjAyMywwLTEuNDE0ICAgQy0wLjEyLDI5LjM2My0wLjEyLDEyLjIzNCwxMC40MDcsMS43MDd6IiBmaWxsPSIjMDAwMDAwIi8+Cgk8cGF0aCBkPSJNNTAuMDA1LDAuMjkzYy0wLjM5MS0wLjM5MS0xLjAyMy0wLjM5MS0xLjQxNCwwcy0wLjM5MSwxLjAyMywwLDEuNDE0YzUuMDkyLDUuMDkxLDcuODk2LDExLjg3MSw3Ljg5NiwxOS4wOTIgICBTNTMuNjgzLDM0LjgsNDguNTkxLDM5Ljg5MWMtMC4zOTEsMC4zOTEtMC4zOTEsMS4wMjMsMCwxLjQxNGMwLjE5NSwwLjE5NSwwLjQ1MSwwLjI5MywwLjcwNywwLjI5M3MwLjUxMi0wLjA5OCwwLjcwNy0wLjI5MyAgIGM1LjQ3LTUuNDY5LDguNDgxLTEyLjc1MSw4LjQ4MS0yMC41MDZTNTUuNDc1LDUuNzYyLDUwLjAwNSwwLjI5M3oiIGZpbGw9IiMwMDAwMDAiLz4KCTxwYXRoIGQ9Ik0xNC42NTEsNS45NDljMC4zOTEtMC4zOTEsMC4zOTEtMS4wMjMsMC0xLjQxNHMtMS4wMjMtMC4zOTEtMS40MTQsMGMtOC45NjgsOC45NjgtOC45NjgsMjMuNTYsMCwzMi41MjcgICBjMC4xOTUsMC4xOTUsMC40NTEsMC4yOTMsMC43MDcsMC4yOTNzMC41MTItMC4wOTgsMC43MDctMC4yOTNjMC4zOTEtMC4zOTEsMC4zOTEtMS4wMjMsMC0xLjQxNCAgIEM2LjQ2MywyNy40Niw2LjQ2MywxNC4xMzgsMTQuNjUxLDUuOTQ5eiIgZmlsbD0iIzAwMDAwMCIvPgoJPHBhdGggZD0iTTQ1Ljc2Myw0LjUzNWMtMC4zOTEtMC4zOTEtMS4wMjMtMC4zOTEtMS40MTQsMHMtMC4zOTEsMS4wMjMsMCwxLjQxNGM4LjE4OCw4LjE4OCw4LjE4OCwyMS41MTEsMCwyOS42OTkgICBjLTAuMzkxLDAuMzkxLTAuMzkxLDEuMDIzLDAsMS40MTRjMC4xOTUsMC4xOTUsMC40NTEsMC4yOTMsMC43MDcsMC4yOTNzMC41MTItMC4wOTgsMC43MDctMC4yOTMgICBDNTQuNzMxLDI4LjA5NSw1NC43MzEsMTMuNTAzLDQ1Ljc2Myw0LjUzNXoiIGZpbGw9IiMwMDAwMDAiLz4KCTxwYXRoIGQ9Ik0xOC44OTMsOC43NzhjLTAuMzkxLTAuMzkxLTEuMDIzLTAuMzkxLTEuNDE0LDBjLTMuMjA2LDMuMjA2LTQuOTcyLDcuNDc1LTQuOTcyLDEyLjAyMXMxLjc2Niw4LjgxNCw0Ljk3MiwxMi4wMjEgICBjMC4xOTUsMC4xOTUsMC40NTEsMC4yOTMsMC43MDcsMC4yOTNzMC41MTItMC4wOTgsMC43MDctMC4yOTNjMC4zOTEtMC4zOTEsMC4zOTEtMS4wMjMsMC0xLjQxNCAgIGMtNS44NDktNS44NDktNS44NDktMTUuMzY0LDAtMjEuMjEzQzE5LjI4Myw5LjgwMiwxOS4yODMsOS4xNjksMTguODkzLDguNzc4eiIgZmlsbD0iIzAwMDAwMCIvPgoJPHBhdGggZD0iTTQxLjUyMSw4Ljc3OGMtMC4zOTEtMC4zOTEtMS4wMjMtMC4zOTEtMS40MTQsMHMtMC4zOTEsMS4wMjMsMCwxLjQxNGM1Ljg0OSw1Ljg0OSw1Ljg0OSwxNS4zNjQsMCwyMS4yMTMgICBjLTAuMzkxLDAuMzkxLTAuMzkxLDEuMDIzLDAsMS40MTRjMC4xOTUsMC4xOTUsMC40NTEsMC4yOTMsMC43MDcsMC4yOTNzMC41MTItMC4wOTgsMC43MDctMC4yOTMgICBjMy4yMDYtMy4yMDYsNC45NzItNy40NzUsNC45NzItMTIuMDIxUzQ0LjcyNywxMS45ODQsNDEuNTIxLDguNzc4eiIgZmlsbD0iIzAwMDAwMCIvPgoJPHBhdGggZD0iTTI5LjQ5OSwxNGMtMy44NTksMC03LDMuMTQxLTcsN2MwLDMuNTE5LDIuNjE0LDYuNDMyLDYsNi45MlY1OGMwLDAuNTUzLDAuNDQ3LDEsMSwxczEtMC40NDcsMS0xVjI3LjkyICAgYzMuMzg2LTAuNDg4LDYtMy40MDEsNi02LjkyQzM2LjQ5OSwxNy4xNDEsMzMuMzU5LDE0LDI5LjQ5OSwxNHogTTI5LjQ5OSwyNmMtMi43NTcsMC01LTIuMjQzLTUtNXMyLjI0My01LDUtNXM1LDIuMjQzLDUsNSAgIFMzMi4yNTYsMjYsMjkuNDk5LDI2eiIgZmlsbD0iIzAwMDAwMCIvPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+Cjwvc3ZnPgo=";
+			
+			
+			var cloud_img = "data:image/svg+xml;utf8;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iaXNvLTg4NTktMSI/Pgo8IS0tIEdlbmVyYXRvcjogQWRvYmUgSWxsdXN0cmF0b3IgMTkuMC4wLCBTVkcgRXhwb3J0IFBsdWctSW4gLiBTVkcgVmVyc2lvbjogNi4wMCBCdWlsZCAwKSAgLS0+CjxzdmcgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4bWxuczp4bGluaz0iaHR0cDovL3d3dy53My5vcmcvMTk5OS94bGluayIgdmVyc2lvbj0iMS4xIiBpZD0iQ2FwYV8xIiB4PSIwcHgiIHk9IjBweCIgdmlld0JveD0iMCAwIDYwIDYwIiBzdHlsZT0iZW5hYmxlLWJhY2tncm91bmQ6bmV3IDAgMCA2MCA2MDsiIHhtbDpzcGFjZT0icHJlc2VydmUiIHdpZHRoPSI1MTJweCIgaGVpZ2h0PSI1MTJweCI+CjxwYXRoIGQ9Ik01MC45NzYsMjYuMTk0QzUwLjQ0NywxNy4xOTQsNDMuMDI4LDEwLDM0LjA4NSwxMGMtNS40MywwLTEwLjY4OCwyLjY2My0xMy45NDYsNy4wMDhjLTAuMDc1LTAuMDM5LTAuMTU0LTAuMDY2LTAuMjMtMC4xMDIgIGMtMC4xOTgtMC4wOTYtMC4zOTktMC4xODctMC42MDQtMC4yNjljLTAuMTE0LTAuMDQ1LTAuMjI4LTAuMDg2LTAuMzQzLTAuMTI2Yy0wLjIwMy0wLjA3MS0wLjQwOS0wLjEzNC0wLjYxOS0wLjE5MSAgYy0wLjExNS0wLjAzMS0wLjIyOS0wLjA2My0wLjM0NS0wLjA4OWMtMC4yMjUtMC4wNTEtMC40NTUtMC4wOS0wLjY4Ny0wLjEyNWMtMC4xMDEtMC4wMTUtMC4yLTAuMDM1LTAuMzAyLTAuMDQ2ICBDMTYuNjc3LDE2LjAyMywxNi4zNDEsMTYsMTYsMTZjLTQuOTYzLDAtOSw0LjAzNy05LDljMCwwLjEyNywwLjAwOCwwLjI1MiwwLjAxNiwwLjM3N3YwLjAwNEMyLjg1NywyNy42NDksMCwzMi4zOTksMCwzNy4xNTQgIEMwLDQ0LjIzNyw1Ljc2Miw1MCwxMi44NDUsNTBoMjQuNTA4YzAuMTA0LDAsMC4yMDctMC4wMDYsMC4zMTEtMC4wMTRsMC4wNjItMC4wMDhsMC4xMzQsMC4wMDhDMzcuOTYyLDQ5Ljk5NCwzOC4wNjQsNTAsMzguMTY5LDUwICBoOS44MDNDNTQuNjA0LDUwLDYwLDQ0LjYwNCw2MCwzNy45NzJDNjAsMzIuNDgzLDU2LjE3MywyNy41Niw1MC45NzYsMjYuMTk0eiBNNDcuOTcyLDQ4aC05LjgwM2MtMC4wNTksMC0wLjExNi0wLjAwNS0wLjE3NC0wLjAwOSAgbC0wLjI3MS0wLjAxMWwtMC4xOTgsMC4wMTFDMzcuNDY5LDQ3Ljk5NSwzNy40MTEsNDgsMzcuMzUzLDQ4SDEyLjg0NUM2Ljg2NSw0OCwyLDQzLjEzNSwyLDM3LjE1NEMyLDMzLDQuNzA1LDI4LjY4OCw4LjQzMywyNi45MDEgIEw5LDI2LjYzVjI2YzAtMC4xMjcsMC4wMDgtMC4yNTYsMC4wMTUtMC4zODZsMC4wMDktMC4xNmwtMC4wMTItMC4yMUM5LjAwNiwyNS4xNjMsOSwyNS4wODIsOSwyNWMwLTMuODU5LDMuMTQxLTcsNy03ICBjMC4zMDksMCwwLjYxNCwwLjAyNywwLjkxNywwLjA2N2MwLjA3OCwwLjAxLDAuMTU2LDAuMDIzLDAuMjMzLDAuMDM2YzAuMjY3LDAuMDQ0LDAuNTMsMC4xMDIsMC43ODksMC4xNzcgIGMwLjAzNSwwLjAxLDAuMDcxLDAuMDE3LDAuMTA2LDAuMDI3YzAuMjg1LDAuMDg3LDAuNTYzLDAuMTk3LDAuODM1LDAuMzIxYzAuMDcxLDAuMDMyLDAuMTQsMC4wNjcsMC4yMSwwLjEwMSAgYzAuMjQsMC4xMTksMC40NzUsMC4yNDksMC43MDIsMC4zOTZDMjEuNzE5LDIwLjM3MywyMywyMi41MzgsMjMsMjVjMCwwLjU1MywwLjQ0NywxLDEsMXMxLTAuNDQ3LDEtMWMwLTIuNzU0LTEuMjQ2LTUuMjE5LTMuMi02Ljg3MSAgQzI0LjY2NywxNC4zNzksMjkuMzg4LDEyLDM0LjA4NSwxMmM3Ljc0NSwwLDE0LjE3Nyw2LjEzNSwxNC44NDgsMTMuODg4Yy0xLjAyMi0wLjA3Mi0yLjU1Mi0wLjEwOS00LjA4MywwLjEyNCAgYy0wLjU0NiwwLjA4My0wLjkyMSwwLjU5My0wLjgzOCwxLjEzOWMwLjA3NSwwLjQ5NSwwLjUwMSwwLjg1LDAuOTg3LDAuODVjMC4wNSwwLDAuMTAxLTAuMDA0LDAuMTUxLTAuMDEyICBjMi4yMjctMC4zMzcsNC41NDgtMC4wMjEsNC42ODQtMC4wMDJDNTQuNDksMjguODcyLDU4LDMzLjE2MSw1OCwzNy45NzJDNTgsNDMuNTAxLDUzLjUwMSw0OCw0Ny45NzIsNDh6IiBmaWxsPSIjMDAwMDAwIi8+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+Cjwvc3ZnPgo=";
+			
+			var laptop_img = "data:image/svg+xml;utf8;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iaXNvLTg4NTktMSI/Pgo8IS0tIEdlbmVyYXRvcjogQWRvYmUgSWxsdXN0cmF0b3IgMTYuMC4wLCBTVkcgRXhwb3J0IFBsdWctSW4gLiBTVkcgVmVyc2lvbjogNi4wMCBCdWlsZCAwKSAgLS0+CjwhRE9DVFlQRSBzdmcgUFVCTElDICItLy9XM0MvL0RURCBTVkcgMS4xLy9FTiIgImh0dHA6Ly93d3cudzMub3JnL0dyYXBoaWNzL1NWRy8xLjEvRFREL3N2ZzExLmR0ZCI+CjxzdmcgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4bWxuczp4bGluaz0iaHR0cDovL3d3dy53My5vcmcvMTk5OS94bGluayIgdmVyc2lvbj0iMS4xIiBpZD0iQ2FwYV8xIiB4PSIwcHgiIHk9IjBweCIgd2lkdGg9IjUxMnB4IiBoZWlnaHQ9IjUxMnB4IiB2aWV3Qm94PSIwIDAgOTcuMzg1IDk3LjM4NSIgc3R5bGU9ImVuYWJsZS1iYWNrZ3JvdW5kOm5ldyAwIDAgOTcuMzg1IDk3LjM4NTsiIHhtbDpzcGFjZT0icHJlc2VydmUiPgo8Zz4KCTxnPgoJCTxwYXRoIGQ9Ik05Ny4yNjUsNzEuMjYxYy0wLjA5My0wLjEwOC0wLjIzLTAuMTcyLTAuMzc0LTAuMTcySDAuNDk0Yy0wLjE0NCwwLTAuMjgsMC4wNjMtMC4zNzQsMC4xNzIgICAgYy0wLjA5NCwwLjEwOC0wLjEzNiwwLjI1My0wLjExNSwwLjM5NmMwLjAxNCwwLjA5LDEuNDY4LDkuMDE2LDEyLjc1Myw5LjAxNmg3MS44NjljMTEuMjg0LDAsMTIuNzM4LTguOTI2LDEyLjc1My05LjAxNiAgICBDOTcuNCw3MS41MTQsOTcuMzU4LDcxLjM2OSw5Ny4yNjUsNzEuMjYxeiBNNTUuOTQyLDc3LjU0N2gtMTQuNXYtMy4zMzRoMTQuNVY3Ny41NDd6IiBmaWxsPSIjMDAwMDAwIi8+CgkJPHBhdGggZD0iTTEwLjUwNyw2Ny42MTloNzYuMzdjMS4xMDQsMCwyLTAuODk2LDItMlYxOC43MTNjMC0xLjEwNC0wLjg5Ni0yLTItMmgtNzYuMzdjLTEuMTA0LDAtMiwwLjg5Ni0yLDJ2NDYuOTA2ICAgIEM4LjUwNyw2Ni43MjMsOS40MDMsNjcuNjE5LDEwLjUwNyw2Ny42MTl6IE0xNS41MDcsMjMuNzEzaDY2LjM3djM2LjkwNmgtNjYuMzdWMjMuNzEzeiIgZmlsbD0iIzAwMDAwMCIvPgoJPC9nPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+CjxnPgo8L2c+Cjwvc3ZnPgo=";
+			
+			var eth_img = "data:image/svg+xml;utf8;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iaXNvLTg4NTktMSI/Pgo8IS0tIEdlbmVyYXRvcjogQWRvYmUgSWxsdXN0cmF0b3IgMTkuMC4wLCBTVkcgRXhwb3J0IFBsdWctSW4gLiBTVkcgVmVyc2lvbjogNi4wMCBCdWlsZCAwKSAgLS0+CjxzdmcgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4bWxuczp4bGluaz0iaHR0cDovL3d3dy53My5vcmcvMTk5OS94bGluayIgdmVyc2lvbj0iMS4xIiBpZD0iTGF5ZXJfMSIgeD0iMHB4IiB5PSIwcHgiIHZpZXdCb3g9IjAgMCA1MTIgNTEyIiBzdHlsZT0iZW5hYmxlLWJhY2tncm91bmQ6bmV3IDAgMCA1MTIgNTEyOyIgeG1sOnNwYWNlPSJwcmVzZXJ2ZSIgd2lkdGg9IjUxMnB4IiBoZWlnaHQ9IjUxMnB4Ij4KPGc+Cgk8Zz4KCQk8Zz4KCQkJPHBhdGggZD0iTTQ4Ni40LDY4LjI2N0gyNS42Yy0xNC4xMzQsMC0yNS42LDExLjQ2Ni0yNS42LDI1LjZ2MzI0LjI2N2MwLDE0LjEzNCwxMS40NjYsMjUuNiwyNS42LDI1LjZoNDYwLjggICAgIGMxNC4xMzQsMCwyNS42LTExLjQ2NiwyNS42LTI1LjZWOTMuODY3QzUxMiw3OS43MzMsNTAwLjUzNCw2OC4yNjcsNDg2LjQsNjguMjY3eiBNNDk0LjkzMyw0MTguMTMzICAgICBjMCw0LjcwOC0zLjgyNSw4LjUzMy04LjUzMyw4LjUzM0gyNS42Yy00LjcwOCwwLTguNTMzLTMuODI1LTguNTMzLTguNTMzVjkzLjg2N2MwLTQuNzA4LDMuODI1LTguNTMzLDguNTMzLTguNTMzaDQ2MC44ICAgICBjNC43MDgsMCw4LjUzMywzLjgyNSw4LjUzMyw4LjUzM1Y0MTguMTMzeiIgZmlsbD0iIzAwMDAwMCIvPgoJCQk8cGF0aCBkPSJNNDI2LjY2NywxMjhIODUuMzMzYy00LjcxMywwLTguNTMzLDMuODItOC41MzMsOC41MzN2MTYyLjEzM2MwLDQuNzEzLDMuODIsOC41MzMsOC41MzMsOC41MzNIMTI4djM0LjEzMyAgICAgYzAsNC43MTMsMy44Miw4LjUzMyw4LjUzMyw4LjUzM2g1MS4ydjI1LjZjMCw0LjcxMywzLjgyLDguNTMzLDguNTMzLDguNTMzaDExOS40NjdjNC43MTMsMCw4LjUzMy0zLjgyLDguNTMzLTguNTMzdi0yNS42aDUxLjIgICAgIGM0LjcxMywwLDguNTMzLTMuODIxLDguNTMzLTguNTMzVjMwNy4yaDQyLjY2N2M0LjcxMywwLDguNTMzLTMuODIsOC41MzMtOC41MzNWMTM2LjUzM0M0MzUuMiwxMzEuODIxLDQzMS4zOCwxMjgsNDI2LjY2NywxMjh6ICAgICAgTTQxOC4xMzMsMjkwLjEzM2gtNDIuNjY3Yy00LjcxMywwLTguNTMzLDMuODItOC41MzMsOC41MzNWMzMyLjhoLTUxLjJjLTQuNzEzLDAtOC41MzMsMy44MjEtOC41MzMsOC41MzN2MjUuNkgyMDQuOHYtMjUuNiAgICAgYzAtNC43MTMtMy44Mi04LjUzMy04LjUzMy04LjUzM2gtNTEuMnYtMzQuMTMzYzAtNC43MTMtMy44Mi04LjUzMy04LjUzMy04LjUzM0g5My44NjdWMTQ1LjA2N2gxNy4wNjd2MTcuMDY3ICAgICBjMCw0LjcxMywzLjgyLDguNTMzLDguNTMzLDguNTMzczguNTMzLTMuODIsOC41MzMtOC41MzN2LTE3LjA2N2gxNy4wNjd2MTcuMDY3YzAsNC43MTMsMy44MjEsOC41MzMsOC41MzMsOC41MzMgICAgIGM0LjcxMywwLDguNTMzLTMuODIsOC41MzMtOC41MzN2LTE3LjA2N0gxNzkuMnYxNy4wNjdjMCw0LjcxMywzLjgyLDguNTMzLDguNTMzLDguNTMzczguNTMzLTMuODIsOC41MzMtOC41MzN2LTE3LjA2N2gxNy4wNjcgICAgIHYxNy4wNjdjMCw0LjcxMywzLjgyLDguNTMzLDguNTMzLDguNTMzczguNTMzLTMuODIsOC41MzMtOC41MzN2LTE3LjA2N2gxNy4wNjd2MTcuMDY3YzAsNC43MTMsMy44Miw4LjUzMyw4LjUzMyw4LjUzMyAgICAgczguNTMzLTMuODIsOC41MzMtOC41MzN2LTE3LjA2N0gyODEuNnYxNy4wNjdjMCw0LjcxMywzLjgyLDguNTMzLDguNTMzLDguNTMzczguNTMzLTMuODIsOC41MzMtOC41MzN2LTE3LjA2N2gxNy4wNjd2MTcuMDY3ICAgICBjMCw0LjcxMywzLjgyLDguNTMzLDguNTMzLDguNTMzczguNTMzLTMuODIsOC41MzMtOC41MzN2LTE3LjA2N2gxNy4wNjd2MTcuMDY3YzAsNC43MTMsMy44Miw4LjUzMyw4LjUzMyw4LjUzMyAgICAgczguNTMzLTMuODIsOC41MzMtOC41MzN2LTE3LjA2N0gzODR2MTcuMDY3YzAsNC43MTMsMy44MjEsOC41MzMsOC41MzMsOC41MzNjNC43MTMsMCw4LjUzMy0zLjgyLDguNTMzLTguNTMzdi0xNy4wNjdoMTcuMDY3ICAgICBWMjkwLjEzM3oiIGZpbGw9IiMwMDAwMDAiLz4KCQk8L2c+Cgk8L2c+CjwvZz4KPGc+CjwvZz4KPGc+CjwvZz4KPGc+CjwvZz4KPGc+CjwvZz4KPGc+CjwvZz4KPGc+CjwvZz4KPGc+CjwvZz4KPGc+CjwvZz4KPGc+CjwvZz4KPGc+CjwvZz4KPGc+CjwvZz4KPGc+CjwvZz4KPGc+CjwvZz4KPGc+CjwvZz4KPGc+CjwvZz4KPC9zdmc+Cg==";
+			
+			nodes.push({id: 1, label: '<%=luci.sys.hostname() or "?"%>', image: router_img, shape: 'image'});
+			
+			<% local p, id, v, w, m, h; id = 1; for _, v in ipairs(wifinets) do -%>
+				<% for _, w in ipairs(v["networks"]) do -%>
+					<% id = id + 1; -%>
+					nodes.push({id: <%=id%>, label: '<%=w.ssid%>\n<%=w.frequency%> GHz\n<%=hosts[w.bssid].name%>', image: wifi_img, shape: 'image'});
+					edges.push({from: 1, to: <%=id%>, length: EDGE_LENGTH_SUB});
+					<% p = id; hosts[w.bssid].id = id; -%>
+					<% for m, h in pairs(w["assoclist"]) do -%>
+						<% id = id + 1; hosts[m].id = id; -%>
+						nodes.push({id: <%=id%>, label: '<%=hosts[m].name%>', image: laptop_img, shape: 'image'});
+						edges.push({from: <%=p%>, to: <%=id%>, length: EDGE_LENGTH_MAIN*<%=-h["signal"]%>/40});
+					<%- end %>
+				<%- end %>
+			<%- end %>
+			
+			<%- id = id + 1; local eth = 1; %>
+			//nodes.push({id: <%=eth%>, label: 'ETH', image: eth_img, shape: 'image'});
+			//edges.push({from: 1, to: <%=eth%>, length: EDGE_LENGTH_MAIN});
+			
+			<%
+			for m, host in pairs(hosts) do
+				if not host.id and not host.hide then
+					id = id + 1;
+					host.id = id;%>
+					nodes.push({id: <%=id%>, label: '<%=host.name%>', image: laptop_img, shape: 'image'});
+					<% if host.con then %>
+						edges.push({from: <%=eth%>, to: <%=id%>, length: EDGE_LENGTH_MAIN});
+					<%- end %>
+			<%-
+				end
+			end%>
+
+			<%
+			if wan then
+				id = id + 1;
+				local ipaddr  = wan:ipaddr()
+				local gwaddr  = wan:gwaddr()
+				local proto   = wan:proto()
+				local ifname  = wan:ifname()
+				local link    = wan:adminlink()
+			-%>
+				nodes.push({id: <%=id%>, label: '<%=ifname%>\n<%=gwaddr%>', image: cloud_img, shape: 'image'});
+				edges.push({from: 1, to: <%=id%>, label: '<%=ipaddr%>', length: EDGE_LENGTH_MAIN*2});
+			<% end %>
+
+      // create a network
+      var container = document.getElementById('map');
+      var data = {
+        nodes: nodes,
+        edges: edges
+      };
+      var options = {};
+      network = new vis.Network(container, data, options);
+    }
+		
+		
+		draw();
+  </script>
+  
+
+
+
+
+<%+footer%>

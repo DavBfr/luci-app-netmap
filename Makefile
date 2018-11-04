@@ -15,7 +15,6 @@ define Package/luci-app-netmap
 	URL:=https://github.com/DavBfr/luci-app-netmap
 	MAINTAINER:=David PHAM-VAN <dev.nfet.net@gmail.com>
 	SUBMENU:=3. Applications
-	#DEPENDS:=+openvpn-openssl +openssl-util
 	TITLE:=Network Map
 	PKGARCH:=all
 	PKG_LICENSE:=APACHE_2
@@ -44,8 +43,8 @@ define Package/luci-app-netmap/install
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/view/map
 	$(INSTALL_DIR) $(1)/usr/bin
 
-	$(INSTALL_BIN) ./index.htm $(1)/usr/lib/lua/luci/view/map/
-	$(INSTALL_BIN) ./map.lua $(1)/usr/lib/lua/luci/controller/
+	$(INSTALL_BIN) ./src/index.htm $(1)/usr/lib/lua/luci/view/map/
+	$(INSTALL_BIN) ./src/map.lua $(1)/usr/lib/lua/luci/controller/
 endef
 
 define Package/luci-app-netmap/postinst

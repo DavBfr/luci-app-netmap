@@ -21,7 +21,7 @@ install:
 
 script:
 - cd sdk
-- make V=s package/luci-app-netmap/compile
+- make V=s package/$PACKAGE/compile
 - find . -name *.ipk -exec mv {} $TRAVIS_BUILD_DIR \;
 - cd $TRAVIS_BUILD_DIR/
 
@@ -34,6 +34,6 @@ deploy:
     secure: PYrA5xw/z2GqDipXml/WrGEZFNnr5lBjbmDx9sNGgBvIChah5K5q5hC6ZJ7ZsSVwXVKWiXFul5EaGjDFB/Eh5wB33Mb5/ENMztDcWVnik7LS5c4Rp/vDUh274qdE/S3+GgqsuFsS8SP+rh+w6+jozNR6xOBMq9xXUJsF/N5lNp8LZwapeDZOaEl3RB/yGv5DAfsVtCJzsp9OUa0MuxXZdmRfyrulxT4eP5hFTuciQ4je1y2hVRp0UszH8lWz7AhlAyAoxKmBdcr1jCM88SiJJcC303HA2DK1U2/p5ejj5tHymcFG8CViveoGxvNbW9zahBrD2Ig0dJL4f7dBQKluEruex3iZJtkDkoFB7XhTevh2DLmFa0D+d+/19qzLKnL0W4EKWqBCgTabv/wlM8RmvLPK4Ql7/3bNeLFbn2Oc9iW/JEkTCSJWLhcq/AGlCgYrMgYaMM9daeAi96DpW/tuCUsbSfKi+p/xniyWqfV0s09NRMSOAK9WY+GllbKL9XgvVaKqUbHTsKK9EmmtTaWb4JS6NSzUM1pYQnjh5/g/TiEP5kFVo6dbFi6o9c20XMiXFkcddXuyJmsPlCyWwfb38PgaSFkxEe8tL+bMQJK8tSJKJtny4wjetCgQemtyd61vpifpBpCP9dNcL1ydURiBrhUOlaY+6fN9xTx6q1bNQUQ=
   skip_cleanup: true
   file_glob: true
-  file: $TRAVIS_BUILD_DIR/luci-app-netmap*.ipk
+  file: $TRAVIS_BUILD_DIR/$PACKAGE*.ipk
   on:
     tags: true

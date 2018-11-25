@@ -99,15 +99,19 @@
 			nodes.push({id: 1, label: '<%=luci.sys.hostname() or "?"%>', image: router_img, shape: 'image'});
 			
 			<% local p, id, v, w, m, h; id = 1; for _, v in ipairs(wifinets) do -%>
-				<% for _, w in ipairs(v["networks"]) do -%>
+				<% for _, w in ipairs(v.networks) do -%>
 					<% id = id + 1; -%>
 					nodes.push({id: <%=id%>, label: '<%=w.ssid%>\n<%=w.frequency%> GHz\n<%=hosts[w.bssid].name%>', image: wifi_img, shape: 'image'});
 					edges.push({from: 1, to: <%=id%>, length: EDGE_LENGTH_SUB});
 					<% p = id; hosts[w.bssid].id = id; -%>
-					<% for m, h in pairs(w["assoclist"]) do -%>
-						<% id = id + 1; hosts[m].id = id; -%>
-						nodes.push({id: <%=id%>, label: '<%=hosts[m].name%>', image: laptop_img, shape: 'image'});
-						edges.push({from: <%=p%>, to: <%=id%>, length: EDGE_LENGTH_MAIN*<%=-h["signal"]%>/40});
+					<% local net = ntm:get_wifinet(w.ifname) -%>
+					<% for m, h in pairs(net:assoclist()) do 
+						id = id + 1
+						hosts[m].id = id;
+						local host_name = (hosts[m]) and (hosts[m].name or hosts[m].ipv4 or hosts[m].ipv6)
+						-%>
+						nodes.push({id: <%=id%>, label: '<%=host_name%>', image: laptop_img, shape: 'image'});
+						edges.push({from: <%=p%>, to: <%=id%>, length: EDGE_LENGTH_MAIN*<%=-h.signal%>/40});
 					<%- end %>
 				<%- end %>
 			<%- end %>
